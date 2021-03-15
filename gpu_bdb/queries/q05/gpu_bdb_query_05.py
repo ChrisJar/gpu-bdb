@@ -184,7 +184,14 @@ def main(client, config):
     keep_cols = ["i_item_sk", "i_category_id", "clicks_in_category"]
     item_ddf = item_ddf[keep_cols]
 
-    web_clickstream_flist = glob.glob(os.path.join(config["data_dir"], "web_clickstreams/*.parquet"))
+    if config['data_dir'][:5] == 's3://':
+        import s3fs
+        fs = fs = s3fs.S3FileSystem()
+        web_clickstream_flist = fs.glob(os.path.join(config["data_dir"], "web_clickstreams/*.parquet"))
+        web_clickstream_flist = ['s3://' + fn for fn in web_clickstream_flist]
+    else:
+        web_clickstream_flist = glob.glob(os.path.join(config["data_dir"], "web_clickstreams/*.parquet"))
+
     n_workers = len(client.scheduler_info()["workers"])
     batchsize = len(web_clickstream_flist) // n_workers
     if batchsize < 1:

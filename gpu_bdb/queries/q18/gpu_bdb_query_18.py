@@ -287,10 +287,19 @@ def main(client, config):
     # This file comes from the official TPCx-BB kit
     # We extracted it from bigbenchqueriesmr.jar
     sentiment_dir = os.path.join(config["data_dir"], "sentiment_files")
-    with open(os.path.join(sentiment_dir, "negativeSentiment.txt")) as fh:
-        negativeSentiment = list(map(str.strip, fh.readlines()))
-        # dedupe for one extra record in the source file
-        negativeSentiment = list(set(negativeSentiment))
+    if config['data_dir'][:5] == 's3://':
+        import s3fs
+        fs = s3fs.S3FileSystem()
+        print(os.path.join(sentiment_dir, "negativeSentiment.txt"))
+        with fs.open(os.path.join(sentiment_dir, "negativeSentiment.txt"), mode='r') as fh:
+            negativeSentiment = list(map(str.strip, fh.readlines()))
+            # dedupe for one extra record in the source file
+            negativeSentiment = list(set(negativeSentiment))
+    else:
+        with open(os.path.join(sentiment_dir, "negativeSentiment.txt")) as fh:
+            negativeSentiment = list(map(str.strip, fh.readlines()))
+            # dedupe for one extra record in the source file
+            negativeSentiment = list(set(negativeSentiment))
 
     word_df = sentences.map_partitions(
         create_words_from_sentences,

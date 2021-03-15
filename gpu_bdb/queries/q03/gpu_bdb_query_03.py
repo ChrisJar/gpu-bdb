@@ -232,7 +232,14 @@ def main(client, config):
     # this causes more memory pressures as we try to read the whole thing ( and spill that)
     # at once and then do filtration .
 
-    web_clickstream_flist = glob.glob(os.path.join(config["data_dir"], "web_clickstreams/*.parquet"))
+    if config['data_dir'][:5] == 's3://':
+        import s3fs
+        fs = fs = s3fs.S3FileSystem()
+        web_clickstream_flist = fs.glob(os.path.join(config["data_dir"], "web_clickstreams/*.parquet"))
+        web_clickstream_flist = ['s3://' + fn for fn in web_clickstream_flist]
+    else:
+        web_clickstream_flist = glob.glob(os.path.join(config["data_dir"], "web_clickstreams/*.parquet"))
+
     task_ls = [
         delayed(pre_repartition_task)(fn, item_df.to_delayed()[0], wcs_tstamp_min)
         for fn in web_clickstream_flist
@@ -266,7 +273,7 @@ def main(client, config):
     ### todo: remove this later after more testing
     wait(grouped_df)
     print("---" * 20)
-    print("grouping complete ={}".format(len(grouped_df)))
+    print("grouping complete ={}".format(len(grouped_df.index)))
     grouped_df = grouped_df.groupby(["i_item_sk"]).sum(split_every=2).reset_index()
     grouped_df.columns = ["i_item_sk", "cnt"]
     result_df = grouped_df.map_partitions(
