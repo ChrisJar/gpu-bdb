@@ -22,6 +22,7 @@ import spacy
 import rmm
 import cupy as cp
 import distributed
+import en_core_web_sm
 
 from bdb_tools.utils import (
     benchmark,
@@ -57,7 +58,7 @@ def read_tables(config):
 
 def ner_parser(df, col_string, batch_size=256):
     spacy.require_gpu()
-    nlp = spacy.load("en_core_web_sm")
+    nlp = en_core_web_sm.load()
     docs = nlp.pipe(df[col_string], disable=["tagger", "parser"], batch_size=batch_size)
     out = []
     for doc in docs:

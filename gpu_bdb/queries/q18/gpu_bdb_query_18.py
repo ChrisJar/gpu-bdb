@@ -290,7 +290,6 @@ def main(client, config):
     if config['data_dir'][:5] == 's3://':
         import s3fs
         fs = s3fs.S3FileSystem()
-        print(os.path.join(sentiment_dir, "negativeSentiment.txt"))
         with fs.open(os.path.join(sentiment_dir, "negativeSentiment.txt"), mode='r') as fh:
             negativeSentiment = list(map(str.strip, fh.readlines()))
             # dedupe for one extra record in the source file

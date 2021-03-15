@@ -250,7 +250,13 @@ def main(client, config):
     web_page_newcols = ["wp_web_page_sk", "wp_type_codes"]
     web_page_df = web_page_df[web_page_newcols]
 
-    web_clickstream_flist = glob.glob(os.path.join(config["data_dir"], "web_clickstreams/*.parquet"))
+    if config['data_dir'][:5] == 's3://':
+        import s3fs
+        fs = fs = s3fs.S3FileSystem()
+        web_clickstream_flist = fs.glob(os.path.join(config["data_dir"], "web_clickstreams/*.parquet"))
+        web_clickstream_flist = ['s3://' + fn for fn in web_clickstream_flist]
+    else:
+        web_clickstream_flist = glob.glob(os.path.join(config["data_dir"], "web_clickstreams/*.parquet"))
 
     task_ls = [
         delayed(etl_wcs)(
