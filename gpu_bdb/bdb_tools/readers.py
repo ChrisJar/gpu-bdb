@@ -88,18 +88,22 @@ class ParquetReader(Reader):
     """Read GPU-BDB Parquet data"""
 
     def __init__(
-        self, basepath, split_row_groups=False,
+        self, basepath, cpu=False, split_row_groups=False,
     ):
         self.table_path_mapping = {
             table: os.path.join(basepath, table, "*.parquet") for table in TABLE_NAMES
         }
         self.split_row_groups = split_row_groups
+        self.cpu = cpu
 
     def show_tables(self):
         return self.table_path_mapping.keys()
 
     def read(self, table, relevant_cols=None, **kwargs):
-        import dask_cudf
+        if self.cpu:
+            import dask.dataframe as dask_cudf
+        else:
+            import dask_cudf
 
         filepath = self.table_path_mapping[table]
         # we ignore split_row_groups if gather_statistics=False
@@ -146,14 +150,14 @@ class CSVReader(Reader):
         pass
 
 
-def build_reader(basepath, data_format="parquet", **kwargs):
+def build_reader(basepath, data_format="parquet", cpu=False, **kwargs):
     assert data_format in ("csv", "parquet", "orc")
 
     if data_format in ("csv",):
         return CSVReader(basepath=basepath, **kwargs)
 
     elif data_format in ("parquet",):
-        return ParquetReader(basepath=basepath, **kwargs)
+        return ParquetReader(basepath=basepath, cpu=cpu, **kwargs)
 
     elif data_format in ("orc",):
         return ORCReader(basepath=basepath, **kwargs)

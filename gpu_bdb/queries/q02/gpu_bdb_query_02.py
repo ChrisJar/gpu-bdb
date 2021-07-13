@@ -48,11 +48,11 @@ def get_relevant_item_series(df, q02_item_sk):
     ].reset_index(drop=True)
 
 
-def reduction_function(df, q02_session_timeout_inSec):
+def reduction_function(df, q02_session_timeout_inSec, cpu=False):
 
     ### get session_df
     df = get_distinct_sessions(
-        df, keep_cols=["wcs_user_sk", "wcs_item_sk"], time_out=q02_session_timeout_inSec
+        df, keep_cols=["wcs_user_sk", "wcs_item_sk"], time_out=q02_session_timeout_inSec, cpu=cpu
     )
 
     item_series = get_relevant_item_series(df, q02_item_sk)
@@ -70,6 +70,7 @@ def read_tables(config):
         data_format=config["file_format"],
         basepath=config["data_dir"],
         split_row_groups=config["split_row_groups"],
+        cpu=config["dask_cpu"]
     )
     wcs_cols = ["wcs_user_sk", "wcs_item_sk", "wcs_click_date_sk", "wcs_click_time_sk"]
     wcs_df = table_reader.read("web_clickstreams", relevant_cols=wcs_cols)
@@ -130,7 +131,7 @@ def main(client, config):
     # LIMIT ${hiveconf:q02_limit};
 
     # q02_limit=30
-    grouped_df = f_wcs_df.map_partitions(reduction_function, q02_session_timeout_inSec)
+    grouped_df = f_wcs_df.map_partitions(reduction_function, q02_session_timeout_inSec, cpu=config["dask_cpu"])
     items_value_counts = grouped_df.groupby(["i_item_sk"]).cnt.sum()
 
     items_value_counts = items_value_counts.map_partitions(

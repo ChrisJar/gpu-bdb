@@ -35,6 +35,7 @@ def read_tables(config):
         data_format=config["file_format"],
         basepath=config["data_dir"],
         split_row_groups=config["split_row_groups"],
+        cpu=config["dask_cpu"]
     )
 
     web_sales_cols = [

@@ -59,6 +59,7 @@ def read_tables(config):
         data_format=config["file_format"],
         basepath=config["data_dir"],
         split_row_groups=config["split_row_groups"],
+        cpu=config["dask_cpu"]
     )
 
     item_ddf = table_reader.read("item", relevant_cols=items_columns, index=False)
@@ -113,11 +114,58 @@ def build_and_predict_model(ml_input_df):
     return results_dict
 
 
-def get_groupby_results(file_list, item_df):
+def build_and_predict_model_cpu(ml_input_df):
+    """
+    Create a standardized feature matrix X and target array y.
+    Returns the model and accuracy statistics
+    """
+    import sklearn.linear_model as cuml
+    from sklearn.metrics import confusion_matrix
+
+    feature_names = ["college_education", "male"] + [
+        "clicks_in_%d" % i for i in range(1, 8)
+    ]
+    X = ml_input_df[feature_names]
+    # Standardize input matrix
+    X = (X - X.mean()) / X.std()
+    y = ml_input_df["clicks_in_category"]
+
+    model = cuml.LogisticRegression(
+        tol=convergence_tol,
+        penalty="none",
+#        solver="qn",
+        fit_intercept=True,
+        max_iter=iterations,
+        C=C,
+    )
+    model.fit(X, y)
+    #
+    # Predict and evaluate accuracy
+    # (Should be 1.0) at SF-1
+    #
+    results_dict = {}
+    y_pred = model.predict(X)
+
+    results_dict["auc"] = roc_auc_score(y, y_pred)
+    
+    from sklearn.metrics import precision_score
+    
+    results_dict["precision"] = precision_score(y, y_pred)
+    results_dict["confusion_matrix"] = confusion_matrix(
+        y.astype("int32"), y_pred.astype("int32")
+    )
+    results_dict["output_type"] = "supervised"
+    return results_dict
+
+
+def get_groupby_results(file_list, item_df, cpu=False):
     """
         Functionial approach for better scaling
     """
-    import cudf
+    if cpu:
+        import pandas as cudf
+    else:
+        import cudf
 
     sum_by_cat_ddf = None
     for fn in file_list:
@@ -129,14 +177,24 @@ def get_groupby_results(file_list, item_df):
         keep_cols = ["wcs_user_sk", "i_category_id", "clicks_in_category"]
         wcs_ddf = wcs_ddf[keep_cols]
 
-        wcs_ddf = cudf.DataFrame.one_hot_encoding(
-            wcs_ddf,
-            column="i_category_id",
-            prefix="clicks_in",
-            prefix_sep="_",
-            cats=[i for i in range(1, 8)],
-            dtype=np.int8,
-        )
+        if cpu:
+            wcs_ddf = cudf.get_dummies(
+                wcs_ddf,
+                columns=["i_category_id"],
+                prefix="clicks_in",
+                prefix_sep="_",
+                dtype=np.int8,
+            )
+        else:
+            wcs_ddf = cudf.DataFrame.one_hot_encoding(
+                wcs_ddf,
+                column="i_category_id",
+                prefix="clicks_in",
+                prefix_sep="_",
+                cats=[i for i in range(1, 8)],
+                dtype=np.int8,
+            )
+
         keep_cols = ["wcs_user_sk", "clicks_in_category"] + [
             f"clicks_in_{i}" for i in range(1, 8)
         ]
@@ -162,8 +220,12 @@ def get_groupby_results(file_list, item_df):
 
 
 def main(client, config):
-    import cudf
-    import dask_cudf
+    if config["dask_cpu"]:
+        import pandas as cudf
+        import dask.dataframe as dask_cudf
+    else:
+        import cudf
+        import dask_cudf
 
     item_ddf, customer_ddf, customer_dem_ddf = benchmark(
         read_tables,
@@ -195,7 +257,7 @@ def main(client, config):
         for x in range(0, len(web_clickstream_flist), batchsize)
     ]
     task_ls = [
-        delayed(get_groupby_results)(c, item_ddf.to_delayed()[0]) for c in chunks
+        delayed(get_groupby_results)(c, item_ddf.to_delayed()[0], cpu=config["dask_cpu"]) for c in chunks
     ]
 
     meta_d = {
@@ -209,7 +271,9 @@ def main(client, config):
         "clicks_in_6": {},
         "clicks_in_7": {},
     }
-    df = cudf.from_pandas(pd.DataFrame.from_dict(meta_d, dtype="int64"))
+    df = pd.DataFrame.from_dict(meta_d, dtype="int64")
+    if not config["dask_cpu"]:
+        df = cudf.from_pandas(df)
 
     sum_by_cat_ddf = dask_cudf.from_delayed(task_ls, meta=df)
     sum_by_cat_ddf = sum_by_cat_ddf.groupby(["wcs_user_sk"], sort=True).sum()
@@ -260,7 +324,11 @@ def main(client, config):
 
     ml_input_df = ml_input_df.persist()
 
-    ml_tasks = [delayed(build_and_predict_model)(df) for df in ml_input_df.to_delayed()]
+    if config["dask_cpu"]:
+        ml_tasks = [delayed(build_and_predict_model_cpu)(df) for df in ml_input_df.to_delayed()]
+    else:
+        ml_tasks = [delayed(build_and_predict_model)(df) for df in ml_input_df.to_delayed()]
+    
     results_dict = client.compute(*ml_tasks, sync=True)
 
     return results_dict

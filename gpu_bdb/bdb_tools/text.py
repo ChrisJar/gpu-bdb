@@ -21,9 +21,12 @@ EOL_CHAR = "è"
 
 
 def create_sentences_from_reviews(
-    df, review_column="pr_review_content", end_of_line_char=EOL_CHAR
+    df, review_column="pr_review_content", end_of_line_char=EOL_CHAR, cpu=False
 ):
-    import cudf
+    if cpu:
+        import pandas as cudf
+    else:
+        import cudf
 
     sentences = df[review_column].str.tokenize(delimiter=end_of_line_char)
 
@@ -43,8 +46,12 @@ def create_words_from_sentences(
     sentence_column="sentence",
     global_position_column="sentence_tokenized_global_pos",
     delimiter=" ",
+    cpu=False
 ):
-    import cudf
+    if cpu:
+        import pandas as cudf
+    else
+        import cudf
 
     cleaned_sentences = df[sentence_column].str.replace(
         [",", ";", "-", '"', "."], ["", "", "", "", " "], regex=False

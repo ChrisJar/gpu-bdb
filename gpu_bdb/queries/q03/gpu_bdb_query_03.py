@@ -41,7 +41,10 @@ q03_limit = 100
 
 
 def get_wcs_minima(config):
-    import dask_cudf
+    if config["dask_cpu"]:
+        import dask.dataframe as dask_cudf
+    else:
+        import dask_cudf
 
     wcs_df = dask_cudf.read_parquet(
         os.path.join(config["data_dir"], "web_clickstreams/*.parquet"),
@@ -54,8 +57,11 @@ def get_wcs_minima(config):
     return wcs_tstamp_min
 
 
-def pre_repartition_task(wcs_fn, item_df, wcs_tstamp_min):
-    import cudf
+def pre_repartition_task(wcs_fn, item_df, wcs_tstamp_min, cpu=False):
+    if cpu:
+        import pandas as cudf
+    else:
+        import cudf
 
     wcs_cols = [
         "wcs_user_sk",
@@ -65,13 +71,18 @@ def pre_repartition_task(wcs_fn, item_df, wcs_tstamp_min):
         "wcs_click_time_sk",
     ]
     wcs_df = cudf.read_parquet(wcs_fn, columns=wcs_cols)
-    wcs_df = wcs_df._drop_na_rows(subset=["wcs_user_sk", "wcs_item_sk"])
+    wcs_df = wcs_df.dropna(subset=["wcs_user_sk", "wcs_item_sk"])
     wcs_df["tstamp"] = wcs_df["wcs_click_date_sk"] * 86400 + wcs_df["wcs_click_time_sk"]
     wcs_df["tstamp"] = wcs_df["tstamp"] - wcs_tstamp_min
 
     wcs_df["tstamp"] = wcs_df["tstamp"].astype("int32")
     wcs_df["wcs_user_sk"] = wcs_df["wcs_user_sk"].astype("int32")
-    wcs_df["wcs_sales_sk"] = wcs_df["wcs_sales_sk"].astype("int32")
+
+    if cpu:
+        wcs_df["wcs_sales_sk"] = wcs_df["wcs_sales_sk"].astype("float32").round()
+    else:
+        wcs_df["wcs_sales_sk"] = wcs_df["wcs_sales_sk"].astype("int32")
+    
     wcs_df["wcs_item_sk"] = wcs_df["wcs_item_sk"].astype("int32")
 
     merged_df = wcs_df.merge(
@@ -91,17 +102,22 @@ def pre_repartition_task(wcs_fn, item_df, wcs_tstamp_min):
     merged_df = merged_df[cols_keep]
 
     merged_df["wcs_user_sk"] = merged_df["wcs_user_sk"].astype("int32")
-    merged_df["wcs_sales_sk"] = merged_df["wcs_sales_sk"].astype("int32")
+
+    if cpu:
+        merged_df["wcs_sales_sk"] = merged_df["wcs_sales_sk"].astype("float32").round()
+    else:
+        merged_df["wcs_sales_sk"] = merged_df["wcs_sales_sk"].astype("int32")
+
     merged_df["wcs_item_sk"] = merged_df["wcs_item_sk"].astype("int32")
     merged_df["wcs_sales_sk"] = merged_df.wcs_sales_sk.fillna(0)
     return merged_df
 
 
-def reduction_function(df, item_df_filtered):
+def reduction_function(df, item_df_filtered, cpu=False):
     """
          Combines all the reduction ops into a single frame
     """
-    product_view_results = apply_find_items_viewed(df, item_mappings=item_df_filtered)
+    product_view_results = apply_find_items_viewed(df, item_mappings=item_df_filtered, cpu=cpu)
 
     grouped_df = product_view_results.groupby(["i_item_sk"]).size().reset_index()
     grouped_df.columns = ["i_item_sk", "cnt"]
@@ -113,6 +129,7 @@ def read_tables(config):
         data_format=config["file_format"],
         basepath=config["data_dir"],
         split_row_groups=config["split_row_groups"],
+        cpu=config["dask_cpu"]
     )
 
     item_cols = ["i_category_id", "i_item_sk"]
@@ -158,8 +175,11 @@ def find_items_viewed_before_purchase_kernel(
                 out_col[i * N + k - 1] = 0
 
 
-def apply_find_items_viewed(df, item_mappings):
-    import cudf
+def apply_find_items_viewed(df, item_mappings, cpu=False):
+    if cpu:
+        import pandas as cudf
+    else:
+        import cudf
 
     # need to sort descending to ensure that the
     # next N rows are the previous N clicks
@@ -208,8 +228,12 @@ def apply_find_items_viewed(df, item_mappings):
 
 
 def main(client, config):
-    import dask_cudf
-    import cudf
+    if config["dask_cpu"]:
+        import dask.dataframe as dask_cudf
+        import pandas as cudf
+    else:
+        import dask_cudf
+        import cudf
 
     item_df = benchmark(
         read_tables,
@@ -234,7 +258,7 @@ def main(client, config):
 
     web_clickstream_flist = glob.glob(os.path.join(config["data_dir"], "web_clickstreams/*.parquet"))
     task_ls = [
-        delayed(pre_repartition_task)(fn, item_df.to_delayed()[0], wcs_tstamp_min)
+        delayed(pre_repartition_task)(fn, item_df.to_delayed()[0], wcs_tstamp_min, cpu=config["dask_cpu")
         for fn in web_clickstream_flist
     ]
 
@@ -258,7 +282,7 @@ def main(client, config):
     meta_df = cudf.DataFrame(meta_d)
 
     grouped_df = merged_df.map_partitions(
-        reduction_function, item_df_filtered.to_delayed()[0], meta=meta_df
+        reduction_function, item_df_filtered.to_delayed()[0], meta=meta_df, cpu=config["dask_cpu"]
     )
 
     ### todo: check if this has any impact on stability

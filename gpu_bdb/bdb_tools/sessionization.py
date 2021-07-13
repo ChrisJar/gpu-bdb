@@ -14,15 +14,18 @@
 # limitations under the License.
 #
 
-import cupy as cp
 import numpy as np
 
-
-def get_session_id_from_session_boundry(session_change_df, last_session_len):
+def get_session_id_from_session_boundry(session_change_df, last_session_len, cpu=False):
     """
         This function returns session starts given a session change df
     """
-    import cudf
+    if cpu:
+        import pandas as cudf
+        import numpy as cp
+    else:
+        import cudf
+        import cupy as cp
 
     ## we dont really need the `session_id` to start from 0
     ## the total number of sessions per partition should be fairly limited
@@ -42,12 +45,16 @@ def get_session_id_from_session_boundry(session_change_df, last_session_len):
     return session_id_final_series
 
 
-def get_session_id(df, keep_cols, time_out):
+def get_session_id(df, keep_cols, time_out, cpu=False):
     """
         This function creates a session id column for each click
         The session id grows in incremeant for each user's susbequent session
         Session boundry is defined by the time_out 
     """
+    if cpu:
+        import numpy as cp
+    else:
+        import cupy as cp
 
     df["user_change_flag"] = df["wcs_user_sk"].diff(periods=1) != 0
     df["user_change_flag"] = df["user_change_flag"].fillna(True)
@@ -68,29 +75,29 @@ def get_session_id(df, keep_cols, time_out):
     last_session_len = len(df) - session_change_df["t_index"].iloc[-1]
 
     session_ids = get_session_id_from_session_boundry(
-        session_change_df, last_session_len
+        session_change_df, last_session_len, cpu=cpu
     )
 
     assert len(session_ids) == len(df)
     return session_ids
 
 
-def get_sessions(df, keep_cols, time_out=3600):
+def get_sessions(df, keep_cols, time_out=3600, cpu=False):
     df = df.sort_values(by=["wcs_user_sk", "tstamp_inSec"]).reset_index(drop=True)
-    df["session_id"] = get_session_id(df, keep_cols, time_out)
+    df["session_id"] = get_session_id(df, keep_cols, time_out, cpu=cpu)
     keep_cols += ["session_id"]
     df = df[keep_cols]
     return df
 
 
-def get_distinct_sessions(df, keep_cols, time_out=3600):
+def get_distinct_sessions(df, keep_cols, time_out=3600, cpu=False):
     """
         ### Performence note
         The session + distinct 
         logic takes 0.2 seconds for a dataframe with 10M rows
         on gv-100
     """
-    df = get_sessions(df, keep_cols, time_out=3600)
+    df = get_sessions(df, keep_cols, time_out=3600, cpu=cpu)
     df = df.drop_duplicates().reset_index(drop=True)
     return df
 

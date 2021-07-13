@@ -65,7 +65,8 @@ def benchmark(func, *args, **kwargs):
     logging_info["elapsed_time_seconds"] = elapsed_time
     logging_info["function_name"] = name
     if compute_result:
-        import dask_cudf
+#        import dask_cudf
+        import dask.dataframe as dask_cudf
 
         if isinstance(result, dask_cudf.DataFrame):
             len_tasks = [dask.delayed(len)(df) for df in result.to_delayed()]
@@ -96,7 +97,8 @@ def benchmark(func, *args, **kwargs):
 def write_result(payload, filetype="parquet", output_directory="./"):
     """
     """
-    import cudf
+#    import cudf
+    import pandas as cudf
 
     if isinstance(payload, MutableMapping):
         if payload.get("output_type", None) == "supervised":
@@ -116,6 +118,7 @@ def write_result(payload, filetype="parquet", output_directory="./"):
             df=payload, filetype=filetype, output_directory=output_directory
         )
     else:
+        print(type(payload))
         raise ValueError("payload must be a dict or a dataframe.")
 
 
@@ -927,15 +930,13 @@ def left_semi_join(df_1, df_2, left_on, right_on):
 
 
 def convert_datestring_to_days(df):
-    import cudf
+    import pandas as cudf
 
-    df["d_date"] = (
-        cudf.to_datetime(df["d_date"], format="%Y-%m-%d")
-        .astype("datetime64[s]")
-        .astype("int64")
-        / 86400
-    )
-    df["d_date"] = df["d_date"].astype("int64")
+    df["d_date"] = cudf.to_numeric(
+        cudf.to_datetime(df["d_date"], format="%Y-%m-%d", errors="coerce").astype("datetime64[s]"),
+        errors="coerce",
+    ) / 86400
+    df["d_date"] = df["d_date"].round()
     return df
 
 

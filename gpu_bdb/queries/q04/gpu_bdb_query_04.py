@@ -35,6 +35,7 @@ def read_tables(config):
         data_format=config["file_format"],
         basepath=config["data_dir"],
         split_row_groups=config["split_row_groups"],
+        cpu=config["dask_cpu"]
     )
 
     wp_cols = ["wp_type", "wp_web_page_sk"]
@@ -52,8 +53,11 @@ def read_tables(config):
     return wp_df, web_clicksteams_df
 
 
-def abandonedShoppingCarts(df, DYNAMIC_CAT_CODE, ORDER_CAT_CODE):
-    import cudf
+def abandonedShoppingCarts(df, DYNAMIC_CAT_CODE, ORDER_CAT_CODE, cpu=False):
+    if cpu:
+        import pandas as cudf
+    else:
+        import cudf
 
     # TODO: test without reset index
     df.reset_index(drop=True, inplace=True)
@@ -94,20 +98,23 @@ def abandonedShoppingCarts(df, DYNAMIC_CAT_CODE, ORDER_CAT_CODE):
     )
     del (last_dynamic_df, grouped_count_df)
     return cudf.DataFrame(
-        {"pagecount": result.tstamp_inSec.sum(), "count": len(result)}
+        {"pagecount": [result.tstamp_inSec.sum()], "count": [len(result)]}
     )
 
 
-def reduction_function(df, keep_cols, DYNAMIC_CAT_CODE, ORDER_CAT_CODE):
+def reduction_function(df, keep_cols, DYNAMIC_CAT_CODE, ORDER_CAT_CODE, cpu=False):
     df = get_sessions(df, keep_cols=keep_cols)
     df = abandonedShoppingCarts(
-        df, DYNAMIC_CAT_CODE=DYNAMIC_CAT_CODE, ORDER_CAT_CODE=ORDER_CAT_CODE
+        df, DYNAMIC_CAT_CODE=DYNAMIC_CAT_CODE, ORDER_CAT_CODE=ORDER_CAT_CODE, cpu=cpu
     )
     return df
 
 
 def main(client, config):
-    import cudf
+    if config["dask_cpu"]:
+        import pandas as cudf
+    else:
+        import cudf
 
     wp, wcs_df = benchmark(
         read_tables,
@@ -117,7 +124,10 @@ def main(client, config):
     )
 
     ### downcasting the column inline with q03
-    wcs_df["wcs_user_sk"] = wcs_df["wcs_user_sk"].astype("int32")
+    if config["dask_cpu"]:
+        wcs_df["wcs_user_sk"] = wcs_df["wcs_user_sk"].astype("float32").round()
+    else:
+        wcs_df["wcs_user_sk"] = wcs_df["wcs_user_sk"].astype("int32")
 
     f_wcs_df = wcs_df[
         wcs_df["wcs_web_page_sk"].notnull()
@@ -135,7 +145,10 @@ def main(client, config):
 
     # Convert wp_type to categorical and get cat_id of review and dynamic type
     wp["wp_type"] = wp["wp_type"].map_partitions(lambda ser: ser.astype("category"))
-    cpu_categories = wp["wp_type"].compute().cat.categories.to_pandas()
+    cpu_categories = wp["wp_type"].compute().cat.categories
+    if hasattr(cpu_categories, "to_pandas"):
+        cpu_categories = cpu_categories.to_pandas()
+
     DYNAMIC_CAT_CODE = cpu_categories.get_loc("dynamic")
     ORDER_CAT_CODE = cpu_categories.get_loc("order")
     # ### cast to minimum viable dtype
@@ -152,7 +165,7 @@ def main(client, config):
 
     keep_cols = ["wcs_user_sk", "wp_type_codes", "tstamp_inSec"]
     result_df = merged_df.map_partitions(
-        reduction_function, keep_cols, DYNAMIC_CAT_CODE, ORDER_CAT_CODE
+        reduction_function, keep_cols, DYNAMIC_CAT_CODE, ORDER_CAT_CODE, cpu=config["dask_cpu"]
     )
 
     result = result_df["pagecount"].sum() / result_df["count"].sum()
@@ -160,6 +173,7 @@ def main(client, config):
     result = result.persist()
 
     result = result.compute()
+    
     result_df = cudf.DataFrame({"sum(pagecount)/count(*)": [result]})
     return result_df
 

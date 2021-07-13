@@ -30,6 +30,7 @@ def read_tables(config):
         data_format=config["file_format"],
         basepath=config["data_dir"],
         split_row_groups=config["split_row_groups"],
+        cpu=config["dask_cpu"]
     )
 
     ss_columns = [
@@ -62,7 +63,10 @@ def read_tables(config):
 
 
 def main(client, config):
-    import cudf
+    if config["dask_cpu"]:
+        import pandas as cudf
+    else:
+        import cudf
 
     # Conf variables
 

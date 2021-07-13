@@ -133,6 +133,9 @@ def filter_ss_table(store_sales_df, filtered_item_df):
         ###  AND ss_customer_sk IS NOT NULL
 
     """
+    print("*******")
+    print(filtered_item_df)
+    print("*******")
 
     filtered_ss_df = store_sales_df[
         store_sales_df["ss_customer_sk"].notnull()
@@ -165,6 +168,8 @@ def main(client, config):
     filtered_item_df = filtered_item_df.repartition(npartitions=1)
     filtered_item_df = filtered_item_df.persist()
     wait(filtered_item_df)
+
+#    print(filtered_item_df.to_delayed()[0].compute())
     ###  Query 1
 
     # The main idea is that we don't fuse a filtration task with reading task yet
@@ -193,6 +198,7 @@ def main(client, config):
         "ss_sold_date_sk": np.ones(1, dtype=np.int64),
     }
     meta_df = cudf.DataFrame(meta_d)
+    print(meta_df)
 
     filtered_ss_df = store_sales_df.map_partitions(
         filter_ss_table, filtered_item_df.to_delayed()[0], meta=meta_df

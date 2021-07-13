@@ -44,6 +44,7 @@ def read_tables(config):
         data_format=config["file_format"],
         basepath=config["data_dir"],
         split_row_groups=True,
+        cpu=config["dask_cpu"]
     )
     product_reviews_cols = ["pr_item_sk", "pr_review_content", "pr_review_sk"]
 
@@ -53,8 +54,11 @@ def read_tables(config):
     return product_reviews_df
 
 
-def load_sentiment_words(filename, sentiment):
-    import cudf
+def load_sentiment_words(filename, sentiment, cpu=False):
+    if cpu:
+        import pandas as cudf
+    else:
+        import cudf
 
     with open(filename) as fh:
         sentiment_words = list(map(str.strip, fh.readlines()))
@@ -67,8 +71,12 @@ def load_sentiment_words(filename, sentiment):
 
 
 def main(client, config):
-    import cudf
-    import dask_cudf
+    if config["dask_cpu"]:
+        import pandas as cudf
+        import dask.dataframe as dask_cudf
+    else:
+        import cudf
+        import dask_cudf
 
     product_reviews_df = benchmark(
         read_tables,
@@ -90,7 +98,7 @@ def main(client, config):
         [".", "?", "!"], [eol_char], regex=False
     )
 
-    sentences = product_reviews_df.map_partitions(create_sentences_from_reviews)
+    sentences = product_reviews_df.map_partitions(create_sentences_from_reviews, cpu=config["dask_cpu"])
     # need the global position in the sentence tokenized df
     sentences["x"] = 1
     sentences["sentence_tokenized_global_pos"] = sentences.x.cumsum()
@@ -99,13 +107,14 @@ def main(client, config):
     word_df = sentences.map_partitions(
         create_words_from_sentences,
         global_position_column="sentence_tokenized_global_pos",
+        cpu=config["dask_cpu"]
     )
 
     # These files come from the official TPCx-BB kit
     # We extracted them from bigbenchqueriesmr.jar
     sentiment_dir = os.path.join(config["data_dir"], "sentiment_files")
-    neg_sent_df = load_sentiment_words(os.path.join(sentiment_dir, "negativeSentiment.txt"), "NEG")
-    pos_sent_df = load_sentiment_words(os.path.join(sentiment_dir, "positiveSentiment.txt"), "POS")
+    neg_sent_df = load_sentiment_words(os.path.join(sentiment_dir, "negativeSentiment.txt"), "NEG", cpu=config["dask_cpu"])
+    pos_sent_df = load_sentiment_words(os.path.join(sentiment_dir, "positiveSentiment.txt"), "POS", cpu=config["dask_cpu"])
 
     sent_df = cudf.concat([pos_sent_df, neg_sent_df])
     sent_df = dask_cudf.from_cudf(sent_df, npartitions=1)
